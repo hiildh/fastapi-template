@@ -1,33 +1,52 @@
 # FastAPI Template
 
-This sample repo contains the recommended structure for a Python FastAPI project. In this sample, we use `fastapi` to build a web application and the `pytest` to run tests.
+Este é um template para iniciar um projeto com FastAPI.
 
-For a more in-depth tutorial, see our [Fast API tutorial](https://code.visualstudio.com/docs/python/tutorial-fastapi).
+## Como rodar a API localmente
 
-The code in this repo aims to follow Python style guidelines as outlined in [PEP 8](https://peps.python.org/pep-0008/).
+Siga os passos abaixo para rodar a API localmente:
 
-## Set up instructions
+### Pré-requisitos
 
-This sample makes use of Dev Containers, in order to leverage this setup, make sure you have [Docker installed](https://www.docker.com/products/docker-desktop).
+- Python 3.7 ou superior
+- pip (gerenciador de pacotes do Python)
+- virtualenv (opcional, mas recomendado)
 
-To successfully run this example, we recommend the following VS Code extensions:
+### Passos
 
-- [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-- [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python)
-- [Python Debugger](https://marketplace.visualstudio.com/items?itemName=ms-python.debugpy)
-- [Pylance](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance) 
+1. **Clone o repositório:**
 
-In addition to these extension there a few settings that are also useful to enable. You can enable to following settings by opening the Settings editor (`Ctrl+,`) and searching for the following settings:
+    ```bash
+    git clone https://github.com/hiildh/fastapi-template.git
+    cd fastapi-template
+    ```
 
-- Python > Analysis > **Type Checking Mode** : `basic`
-- Python > Analysis > Inlay Hints: **Function Return Types** : `enable`
-- Python > Analysis > Inlay Hints: **Variable Types** : `enable`
+2. **Crie um ambiente virtual (opcional, mas recomendado):**
 
-## Running the sample
-- Open the template folder in VS Code (**File** > **Open Folder...**)
-- Open the Command Palette in VS Code (**View > Command Palette...**) and run the **Dev Container: Reopen in Container** command.
-- Run the app using the Run and Debug view or by pressing `F5`
-- `Ctrl + click` on the URL that shows up on the terminal to open the running application 
-- Test the API functionality by navigating to `/docs` URL to view the Swagger UI
-- Configure your Python test in the Test Panel or by triggering the **Python: Configure Tests** command from the Command Palette
-- Run tests in the Test Panel or by clicking the Play Button next to the individual tests in the `test_main.py` file
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # No Windows use `venv\Scripts\activate`
+    ```
+
+3. **Instale as dependências:**
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4. **Execute a aplicação:**
+
+    ```bash
+    uvicorn main:app --reload
+    ```
+
+    A aplicação estará disponível em [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+### Estrutura do Projeto
+
+- `main.py`: Arquivo principal da aplicação FastAPI.
+- `requirements.txt`: Arquivo com as dependências do projeto.
+
+### Endpoints
+
+Você pode acessar a documentação interativa da API em [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) após iniciar a aplicação.

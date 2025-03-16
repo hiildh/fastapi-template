@@ -151,7 +151,19 @@ async def join_family(
         raise HTTPException(404, "Família não encontrada")
     except Exception as e:
         raise HTTPException(500, f"Erro: {str(e)}")
-    
+
+@app.get("/users/me/families")
+async def get_my_families(current_user_id: str = Depends(get_current_user)):
+    user_data = db.reference(f"users/{current_user_id}").get()
+    families = user_data.get("families", {})
+    return {"families": list(families.keys())}
+
+@app.get("/families/{family_id}/members")
+async def get_family_members(family_id: str):
+    family_data = db.reference(f"families/{family_id}").get()
+    if not family_data:
+        raise HTTPException(404, "Família não encontrada")
+    return {"members": list(family_data.get("members", {}).keys())}
 
 # --- Função para verificar token ---
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
