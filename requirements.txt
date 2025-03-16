@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+httpx
+firebase-admin
+python-dotenv
+python-jose[cryptography]
+passlib
