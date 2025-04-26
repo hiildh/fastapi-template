@@ -8,6 +8,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
@@ -35,10 +36,18 @@ security = HTTPBearer()
 # Firebase
 cred = credentials.Certificate("firebase-credentials.json")
 initialize_app(cred, {
-    'databaseURL': 'https://lista-compras-2b820-default-rtdb.firebaseio.com/'
+    'databaseURL': os.getenv("FIREBASE_DATABASE_URL", "https://lista-compras-2b820-default-rtdb.firebaseio.com/")
 })
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://192.168.3.9", "http://localhost", "http://192.168.3.59"],  # Substitua pelo IP correto
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Helpers ---
 def generate_id():
@@ -74,12 +83,18 @@ class UserLogin(BaseModel):
 # --- Endpoints ---
 @app.post("/register")
 async def register(user_data: UserCreate):
+    print("Dados recebidos:", user_data)
     try:
         # 1. Cria usuário no Firebase Authentication (Pyrebase)
-        user = auth.create_user_with_email_and_password(
-            user_data.email, 
-            user_data.password
-        )
+        try:
+            user = auth.create_user_with_email_and_password(
+                user_data.email, 
+                user_data.password
+            )
+            print("Usuário criado no Firebase:", user)
+        except Exception as e:
+            print("Erro ao criar usuário no Firebase:", str(e))
+            raise HTTPException(400, {"message": str(e)})
         
         # 2. Cria família automaticamente (Firebase Admin)
         family_id = generate_id()
@@ -104,7 +119,8 @@ async def register(user_data: UserCreate):
         return {"access_token": token, "family_id": family_id}
 
     except Exception as e:
-        raise HTTPException(400, str(e))
+        print("Erro ao criar usuário no Firebase:", str(e))
+        raise HTTPException(400, {"message": str(e)})
 
 @app.post("/login")
 async def login(user_data: UserLogin):

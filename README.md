@@ -38,6 +38,7 @@ Siga os passos abaixo para rodar a API localmente:
 
     ```bash
     uvicorn main:app --reload
+    uvicorn main:app --reload --host 0.0.0.0 --port 8000 # Pra rodar em network
     ```
 
     A aplicação estará disponível em [http://127.0.0.1:8000](http://127.0.0.1:8000).
