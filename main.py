@@ -116,7 +116,7 @@ async def register(user_data: UserCreate):
 
         # 4. Gera token JWT
         token = create_access_token(user["localId"])
-        return {"access_token": token, "family_id": family_id}
+        return {"access_token": token, "family_id": family_id, "name": user_data.name}
 
     except Exception as e:
         print("Erro ao criar usuário no Firebase:", str(e))
@@ -127,7 +127,8 @@ async def login(user_data: UserLogin):
     try:
         user = auth.sign_in_with_email_and_password(user_data.email, user_data.password)
         token = create_access_token(user["localId"])
-        return {"access_token": token}
+        user_data = db.reference(f"users/{user['localId']}").get()
+        return {"access_token": token, "name": user_data.get("name"), "family_id": list(user_data.get("families", {}).keys())[0]}
     
     except Exception as e:
         raise HTTPException(401, "Credenciais inválidas")
