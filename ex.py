@@ -22,7 +22,7 @@ ACCESS_TOKEN_EXPIRE_DAYS = 365  # Token válido por 1 ano
 firebase_config = {
     "apiKey": os.getenv("FIREBASE_API_KEY"),
     "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN"),
-    "databaseURL": "https://lista-compras-2b820-default-rtdb.firebaseio.com/",
+    "databaseURL": "https://shopping-lists-2b820-default-rtdb.firebaseio.com/",
     "projectId": os.getenv("FIREBASE_PROJECT_ID"),
     "storageBucket": os.getenv("FIREBASE_STORAGE_BUCKET"),
     "messagingSenderId": os.getenv("FIREBASE_MESSAGING_SENDER_ID"),
@@ -37,7 +37,7 @@ security = HTTPBearer()
 # Firebase
 cred = credentials.Certificate("firebase-credentials.json")
 initialize_app(cred, {
-    'databaseURL': os.getenv("FIREBASE_DATABASE_URL", "https://lista-compras-2b820-default-rtdb.firebaseio.com/")
+    'databaseURL': os.getenv("FIREBASE_DATABASE_URL", "https://shopping-lists-2b820-default-rtdb.firebaseio.com/")
 })
 
 app = FastAPI()
@@ -75,17 +75,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         return uid
     except JWTError:
         raise HTTPException(401, "Token inválido")
-
-# Nova função auxiliar para obter informações completas de um usuário
-def get_user_data(user_id: str) -> Dict:
-    """Retorna os dados completos de um usuário a partir do ID"""
-    user_data = db.reference(f"users/{user_id}").get()
-    if not user_data:
-        return {"id": user_id, "name": "Usuário desconhecido"}
-    
-    # Adiciona o ID ao objeto do usuário para referência
-    user_data["id"] = user_id
-    return user_data
 
 # --- Models ---
 class UserCreate(BaseModel):
@@ -219,13 +208,7 @@ async def get_family_members(family_id: str):
     family_data = db.reference(f"families/{family_id}").get()
     if not family_data:
         raise HTTPException(404, "Família não encontrada")
-    
-    # Busca informações completas de cada membro
-    members = {}
-    for member_id in family_data.get("members", {}).keys():
-        members[member_id] = get_user_data(member_id)
-    
-    return {"members": members}
+    return {"members": list(family_data.get("members", {}).keys())}
 
 # --- NOVAS FUNCIONALIDADES ---
 
@@ -251,29 +234,12 @@ async def get_shopping_lists(
         lists_ref = db.reference(f"shopping_lists/{family_id}")
         lists = lists_ref.get() or {}
         
-        # Filtra apenas as listas incompletas e processa informações de usuário
+        # Filtra apenas as listas incompletas
         incomplete_lists = {}
         for list_id, list_data in lists.items():
             if list_data.get("status", "incompleta") == "incompleta":
                 # Filtra por nome se o parâmetro de busca estiver presente
                 if q is None or q.lower() in list_data.get("nome", "").lower():
-                    # Adiciona informações completas do criador
-                    if "by_user" in list_data:
-                        list_data["by_user"] = get_user_data(list_data["by_user"])
-                    
-                    # Adiciona informações completas dos usuários vinculados
-                    if "usuarios_vinculados_lista" in list_data:
-                        usuarios_vinculados = {}
-                        for user_id in list_data["usuarios_vinculados_lista"].keys():
-                            usuarios_vinculados[user_id] = get_user_data(user_id)
-                        list_data["usuarios_vinculados_lista"] = usuarios_vinculados
-                    
-                    # Atualiza informações de usuário para cada item
-                    if "itens" in list_data and list_data["itens"]:
-                        for item in list_data["itens"]:
-                            if "by_user" in item:
-                                item["by_user"] = get_user_data(item["by_user"])
-                    
                     incomplete_lists[list_id] = list_data
         
         return {"lists": incomplete_lists}
@@ -309,42 +275,24 @@ async def create_shopping_list(
         itens = []
         for item in shopping_list.itens:
             item_dict = item.dict()
-            item_dict["by_user"] = current_user_id  # Salva o ID do usuário
+            item_dict["by_user"] = current_user_id
             itens.append(item_dict)
-        
-        # Obtém dados do usuário atual para armazenar na resposta
-        current_user_data = get_user_data(current_user_id)
         
         # Cria a nova lista
         current_date = datetime.now().isoformat()
         list_data = {
             "nome": shopping_list.nome,
             "data": current_date,
-            "by_user": current_user_id,  # Salva o ID do usuário
+            "by_user": current_user_id,
             "usuarios_vinculados_lista": {current_user_id: True},
             "familia": family_id,
             "itens": itens,
             "status": "incompleta"
         }
         
-        # Salva no Firebase com IDs (para manter compatibilidade com código existente)
         db.reference(f"shopping_lists/{family_id}/{list_id}").set(list_data)
         
-        # Para a resposta da API, substitui IDs por objetos completos
-        response_data = list_data.copy()
-        response_data["by_user"] = current_user_data
-        
-        # Substitui IDs por objetos para usuários vinculados
-        usuarios_vinculados = {}
-        for user_id in list_data["usuarios_vinculados_lista"].keys():
-            usuarios_vinculados[user_id] = get_user_data(user_id)
-        response_data["usuarios_vinculados_lista"] = usuarios_vinculados
-        
-        # Substitui IDs por objetos para cada item
-        for item in response_data["itens"]:
-            item["by_user"] = current_user_data
-        
-        return {"id": list_id, "data": response_data}
+        return {"id": list_id, "data": list_data}
     
     except Exception as e:
         raise HTTPException(500, f"Erro ao criar lista: {str(e)}")
@@ -409,13 +357,8 @@ async def get_shopping_list_items(
         if not list_data:
             raise HTTPException(404, "Lista não encontrada")
         
-        # Retorna os itens da lista com informações completas de usuário
+        # Retorna os itens da lista
         items = list_data.get("itens", [])
-        
-        # Substitui o ID do usuário pelo objeto completo para cada item
-        for item in items:
-            if "by_user" in item:
-                item["by_user"] = get_user_data(item["by_user"])
         
         return {"items": items}
     
@@ -454,25 +397,13 @@ async def add_items_to_shopping_list(
         
         for item in items_add.itens:
             item_dict = item.dict()
-            item_dict["by_user"] = current_user_id  # Salva o ID do usuário
+            item_dict["by_user"] = current_user_id
             current_items.append(item_dict)
         
         # Atualiza a lista no Firebase
         list_ref.update({"itens": current_items})
         
-        # Para a resposta, substitui o ID do usuário pelo objeto completo
-        user_data = get_user_data(current_user_id)
-        response_items = []
-        
-        for item in items_add.itens:
-            item_dict = item.dict()
-            item_dict["by_user"] = user_data
-            response_items.append(item_dict)
-        
-        return {
-            "message": f"{len(items_add.itens)} itens adicionados à lista",
-            "items_added": response_items
-        }
+        return {"message": f"{len(items_add.itens)} itens adicionados à lista"}
     
     except Exception as e:
         raise HTTPException(500, f"Erro ao adicionar itens: {str(e)}")
@@ -516,12 +447,7 @@ async def update_shopping_list_item(
         # Atualiza a lista no Firebase
         list_ref.update({"itens": items})
         
-        # Para a resposta, substitui o ID do usuário pelo objeto completo
-        updated_item = items[item_index].copy()
-        if "by_user" in updated_item:
-            updated_item["by_user"] = get_user_data(updated_item["by_user"])
-        
-        return {"message": "Item atualizado", "item": updated_item}
+        return {"message": "Item atualizado"}
     
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar item: {str(e)}")
@@ -560,11 +486,7 @@ async def delete_shopping_list_item(
         # Atualiza a lista no Firebase
         list_ref.update({"itens": items})
         
-        # Para a resposta, substitui o ID do usuário pelo objeto completo
-        if "by_user" in removed_item:
-            removed_item["by_user"] = get_user_data(removed_item["by_user"])
-        
-        return {"message": f"Item '{removed_item['nome']}' removido da lista", "item": removed_item}
+        return {"message": f"Item '{removed_item['nome']}' removido da lista"}
     
     except Exception as e:
         raise HTTPException(500, f"Erro ao remover item: {str(e)}")
@@ -630,23 +552,6 @@ async def get_shopping_lists_history(
         for list_id, list_data in lists.items():
             status = list_data.get("status", "")
             if status in ["concluida", "cancelada"]:
-                # Adiciona informações completas do criador
-                if "by_user" in list_data:
-                    list_data["by_user"] = get_user_data(list_data["by_user"])
-                
-                # Adiciona informações completas dos usuários vinculados
-                if "usuarios_vinculados_lista" in list_data:
-                    usuarios_vinculados = {}
-                    for user_id in list_data["usuarios_vinculados_lista"].keys():
-                        usuarios_vinculados[user_id] = get_user_data(user_id)
-                    list_data["usuarios_vinculados_lista"] = usuarios_vinculados
-                
-                # Atualiza informações de usuário para cada item
-                if "itens" in list_data and list_data["itens"]:
-                    for item in list_data["itens"]:
-                        if "by_user" in item:
-                            item["by_user"] = get_user_data(item["by_user"])
-                
                 history_lists[list_id] = list_data
         
         # Ordena por data (mais recente primeiro)
@@ -660,3 +565,18 @@ async def get_shopping_lists_history(
     
     except Exception as e:
         raise HTTPException(500, f"Erro ao obter histórico: {str(e)}")
+
+# Verifica o token do usuário
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        uid = payload.get("sub")
+        
+        # Verifica se o usuário existe
+        if not db.reference(f"users/{uid}").get():
+            raise HTTPException(404, "Usuário não encontrado")
+        
+        return uid
+    except JWTError:
+        raise HTTPException(401, "Token inválido")
