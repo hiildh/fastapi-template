@@ -44,7 +44,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://192.168.3.9", "http://localhost", "http://192.168.3.59"],  # Substitua pelo IP correto
+    allow_origins=["*"],  # Substitua pelo IP correto
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -212,7 +212,18 @@ async def join_family(
 async def get_my_families(current_user_id: str = Depends(get_current_user)):
     user_data = db.reference(f"users/{current_user_id}").get()
     families = user_data.get("families", {})
-    return {"families": list(families.keys())}
+    
+    family_objects = {}
+    for family_id in families.keys():
+        family_data = db.reference(f"families/{family_id}").get()
+        if family_data:
+            # Adiciona o ID da família ao objeto retornado
+            family_data["id"] = family_id
+            family_objects[family_id] = family_data
+    
+    print("Dados das famílias:", family_objects)
+    
+    return {"families": list(family_objects.values())}
 
 @app.get("/families/{family_id}/members")
 async def get_family_members(family_id: str):
@@ -257,6 +268,9 @@ async def get_shopping_lists(
             if list_data.get("status", "incompleta") == "incompleta":
                 # Filtra por nome se o parâmetro de busca estiver presente
                 if q is None or q.lower() in list_data.get("nome", "").lower():
+                    # Adiciona o ID da lista ao objeto retornado
+                    list_data["id"] = list_id
+                    
                     # Adiciona informações completas do criador
                     if "by_user" in list_data:
                         list_data["by_user"] = get_user_data(list_data["by_user"])
