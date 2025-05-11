@@ -271,6 +271,11 @@ async def get_shopping_lists(
                     # Adiciona o ID da lista ao objeto retornado
                     list_data["id"] = list_id
                     
+                    # Obtém o nome da família relacionada à lista
+                    family_id = list_data.get("familia")
+                    family_data = db.reference(f"families/{family_id}").get()
+                    list_data["family_name"] = family_data.get("name", "Família desconhecida") if family_data else "Família desconhecida"
+                    
                     # Adiciona informações completas do criador
                     if "by_user" in list_data:
                         list_data["by_user"] = get_user_data(list_data["by_user"])
@@ -527,6 +532,10 @@ async def update_shopping_list_item(
         if not item_update.checado and list_data.get("status") in ["concluida", "cancelada"]:
             list_ref.update({"status": "incompleta"})
         
+        # Verifica se todos os itens estão checados
+        if all(item.get("checado", False) for item in items):
+            list_ref.update({"status": "concluida"})
+        
         # Atualiza a lista no Firebase
         list_ref.update({"itens": items})
         
@@ -623,54 +632,60 @@ async def get_item_suggestions(
 
 @app.get("/shopping-lists/history")
 async def get_shopping_lists_history(
-    family_id: str,
     current_user_id: str = Depends(get_current_user)
 ):
     """
-    Retorna o histórico de listas de compras concluídas ou canceladas.
+    Retorna o histórico de listas de compras concluídas ou canceladas para todas as famílias do usuário.
     """
     try:
-        # Verifica se o usuário pertence à família
+        # Obtém as famílias do usuário
         user_families = db.reference(f"users/{current_user_id}/families").get() or {}
-        if family_id not in user_families:
-            raise HTTPException(403, "Você não tem acesso a esta família")
-        
-        # Obtém todas as listas da família
-        lists_ref = db.reference(f"shopping_lists/{family_id}")
-        lists = lists_ref.get() or {}
-        
-        # Filtra apenas as listas concluídas ou canceladas
+        if not user_families:
+            raise HTTPException(404, "Usuário não possui famílias")
+
         history_lists = {}
-        for list_id, list_data in lists.items():
-            status = list_data.get("status", "")
-            if status in ["concluida", "cancelada"]:
-                # Adiciona informações completas do criador
-                if "by_user" in list_data:
-                    list_data["by_user"] = get_user_data(list_data["by_user"])
-                
-                # Adiciona informações completas dos usuários vinculados
-                if "usuarios_vinculados_lista" in list_data:
-                    usuarios_vinculados = {}
-                    for user_id in list_data["usuarios_vinculados_lista"].keys():
-                        usuarios_vinculados[user_id] = get_user_data(user_id)
-                    list_data["usuarios_vinculados_lista"] = usuarios_vinculados
-                
-                # Atualiza informações de usuário para cada item
-                if "itens" in list_data and list_data["itens"]:
-                    for item in list_data["itens"]:
-                        if "by_user" in item:
-                            item["by_user"] = get_user_data(item["by_user"])
-                
-                history_lists[list_id] = list_data
-        
+
+        # Percorre todas as famílias do usuário
+        for family_id in user_families.keys():
+            # Obtém todas as listas da família
+            lists_ref = db.reference(f"shopping_lists/{family_id}")
+            lists = lists_ref.get() or {}
+
+            # Filtra apenas as listas concluídas ou canceladas
+            for list_id, list_data in lists.items():
+                status = list_data.get("status", "")
+                if status in ["concluida", "cancelada"]:
+                    # Adiciona informações completas do criador
+                    if "by_user" in list_data:
+                        list_data["by_user"] = get_user_data(list_data["by_user"])
+
+                    # Adiciona informações completas dos usuários vinculados
+                    if "usuarios_vinculados_lista" in list_data:
+                        usuarios_vinculados = {}
+                        for user_id in list_data["usuarios_vinculados_lista"].keys():
+                            usuarios_vinculados[user_id] = get_user_data(user_id)
+                        list_data["usuarios_vinculados_lista"] = usuarios_vinculados
+
+                    # Atualiza informações de usuário para cada item
+                    if "itens" in list_data and list_data["itens"]:
+                        for item in list_data["itens"]:
+                            if "by_user" in item:
+                                item["by_user"] = get_user_data(item["by_user"])
+
+                    # Adiciona o nome da família relacionada
+                    family_data = db.reference(f"families/{family_id}").get()
+                    list_data["family_name"] = family_data.get("name", "Família desconhecida") if family_data else "Família desconhecida"
+
+                    history_lists[list_id] = list_data
+
         # Ordena por data (mais recente primeiro)
         sorted_history = dict(sorted(
-            history_lists.items(), 
-            key=lambda item: item[1].get("data", ""), 
+            history_lists.items(),
+            key=lambda item: item[1].get("data", ""),
             reverse=True
         ))
-        
+        print("Histórico de listas:", sorted_history)
         return {"history": sorted_history}
-    
+
     except Exception as e:
         raise HTTPException(500, f"Erro ao obter histórico: {str(e)}")
