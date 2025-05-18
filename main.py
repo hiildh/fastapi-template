@@ -71,7 +71,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         # Verifica se o usuário existe
         if not db.reference(f"users/{uid}").get():
             raise HTTPException(404, "Usuário não encontrado")
-        
+        print("ID do usuário:", uid)
         return uid
     except JWTError:
         raise HTTPException(401, "Token inválido")
@@ -167,7 +167,7 @@ async def login(user_data: UserLogin):
         user = auth.sign_in_with_email_and_password(user_data.email, user_data.password)
         token = create_access_token(user["localId"])
         user_data = db.reference(f"users/{user['localId']}").get()
-        return {"access_token": token, "name": user_data.get("name"), "family_id": list(user_data.get("families", {}).keys())[0]}
+        return {"access_token": token, "name": user_data.get("name"), "family_id": list(user_data.get("families", {}).keys())[0], 'user': user_data}
     
     except Exception as e:
         raise HTTPException(401, "Credenciais inválidas")
@@ -404,6 +404,34 @@ async def update_shopping_list_status(
     except Exception as e:
         raise HTTPException(500, f"Erro ao atualizar status: {str(e)}")
 
+@app.delete("/shopping-lists/{family_id}/{list_id}")
+async def delete_shopping_list(
+    family_id: str,
+    list_id: str,
+    current_user_id: str = Depends(get_current_user)
+):
+    """
+    Remove uma lista de compras de uma família.
+    """
+    try:
+        # Verifica se o usuário pertence à família
+        user_families = db.reference(f"users/{current_user_id}/families").get() or {}
+        if family_id not in user_families:
+            raise HTTPException(403, "Você não tem acesso a esta família")
+
+        # Verifica se a lista existe
+        list_ref = db.reference(f"shopping_lists/{family_id}/{list_id}")
+        list_data = list_ref.get()
+        if not list_data:
+            raise HTTPException(404, "Lista não encontrada")
+
+        # Remove a lista
+        list_ref.delete()
+
+        return {"message": f"Lista '{list_data.get('nome', list_id)}' removida com sucesso."}
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao remover lista: {str(e)}")
+
 # 3 - ITENS DA LISTA
 
 @app.get("/shopping-lists/{family_id}/{list_id}/items")
@@ -437,7 +465,8 @@ async def get_shopping_list_items(
                 item["by_user"] = get_user_data(item["by_user"])
         
         return {"items": items}
-    
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(500, f"Erro ao obter itens: {str(e)}")
 
