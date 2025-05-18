@@ -71,7 +71,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         # Verifica se o usuário existe
         if not db.reference(f"users/{uid}").get():
             raise HTTPException(404, "Usuário não encontrado")
-        print("ID do usuário:", uid)
         return uid
     except JWTError:
         raise HTTPException(401, "Token inválido")
@@ -122,7 +121,6 @@ class ShoppingListItemsAdd(BaseModel):
 # --- Endpoints ---
 @app.post("/register")
 async def register(user_data: UserCreate):
-    print("Dados recebidos:", user_data)
     try:
         # 1. Cria usuário no Firebase Authentication (Pyrebase)
         try:
@@ -130,7 +128,6 @@ async def register(user_data: UserCreate):
                 user_data.email, 
                 user_data.password
             )
-            print("Usuário criado no Firebase:", user)
         except Exception as e:
             print("Erro ao criar usuário no Firebase:", str(e))
             raise HTTPException(400, {"message": str(e)})
@@ -221,7 +218,6 @@ async def get_my_families(current_user_id: str = Depends(get_current_user)):
             family_data["id"] = family_id
             family_objects[family_id] = family_data
     
-    print("Dados das famílias:", family_objects)
     
     return {"families": list(family_objects.values())}
 
@@ -713,7 +709,6 @@ async def get_shopping_lists_history(
             key=lambda item: item[1].get("data", ""),
             reverse=True
         ))
-        print("Histórico de listas:", sorted_history)
         return {"history": sorted_history}
 
     except Exception as e:
