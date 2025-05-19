@@ -9,7 +9,8 @@ from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
+from firebase_admin import auth as admin_auth
 
 load_dotenv()
 
@@ -96,6 +97,17 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
+class UserEdit(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+class PasswordReset(BaseModel):
+    email: str
+    new_password: Optional[str] = None
+
+class FamilyMemberRemove(BaseModel):
+    user_id: str
+
 class ShoppingListItem(BaseModel):
     nome: str
     by_user: Optional[str] = None
@@ -168,6 +180,148 @@ async def login(user_data: UserLogin):
     
     except Exception as e:
         raise HTTPException(401, "Credenciais inválidas")
+    
+@app.patch("/users/me")
+async def edit_user_profile(
+    user_edit: UserEdit,
+    current_user_id: str = Depends(get_current_user)
+):
+    """
+    Edita o nome e/ou email do usuário atual.
+    """
+
+    try:
+        # Obtém os dados atuais do usuário
+        user_ref = db.reference(f"users/{current_user_id}")
+        current_user_data = user_ref.get()
+        
+        if not current_user_data:
+            raise HTTPException(404, "Usuário não encontrado")
+        
+        # Dados a serem atualizados
+        update_data = {}
+        
+        # Atualiza nome se fornecido
+        if user_edit.name is not None:
+            update_data["name"] = user_edit.name.strip()
+        
+        # Atualiza email se fornecido
+        if user_edit.email is not None:
+            # Verifica se o novo email não está em uso por outro usuário
+            
+            update_data["email"] = user_edit.email.strip()
+        
+        if not update_data:
+            raise HTTPException(400, "Nenhum dado válido fornecido para atualização")
+        
+        # Atualiza no Firebase Realtime Database
+        user_ref.update(update_data)
+        
+        # Retorna os dados atualizados
+        updated_user_data = user_ref.get()
+        return {
+            "message": "Perfil atualizado com sucesso",
+            "user": {
+                "id": current_user_id,
+                "name": updated_user_data.get("name"),
+                "email": updated_user_data.get("email")
+            }
+        }
+    
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao atualizar perfil: {str(e)}")
+    
+
+@app.get("/users/by-email/{email}")
+async def get_user_by_email(email: str):
+    try:
+
+        # Busca o usuário no Firebase Authentication
+        try:
+            user_record = admin_auth.get_user_by_email(email)
+            user_id = user_record.uid
+        except admin_auth.UserNotFoundError:
+            raise HTTPException(404, "Usuário com esse email não foi encontrado")
+
+        # Busca os dados do usuário no Realtime Database
+        user_data = db.reference(f"users/{user_id}").get()
+        if not user_data:
+            raise HTTPException(404, "Dados do usuário não encontrados no banco de dados")
+
+        # Inclui o ID do usuário na resposta
+        user_data["id"] = user_id
+        user_data["email"] = email
+
+        return {"user": user_data}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao buscar usuário por email: {str(e)}")
+
+
+
+@app.post("/auth/reset-password")
+async def reset_password(password_reset: PasswordReset):
+    """
+    Redefine a senha do usuário diretamente com a nova senha fornecida.
+    """
+    try:
+
+        if password_reset.email  and not password_reset.new_password:
+            try:
+                # Envia email de reset usando Pyrebase
+                auth.send_password_reset_email(password_reset.email)
+                
+                return {
+                    "message": "Email de redefinição de senha enviado com sucesso",
+                    "email": password_reset.email
+                }
+            
+            except Exception as e:
+                error_message = str(e)
+                # Captura erros específicos do Firebase
+                if "EMAIL_NOT_FOUND" in error_message:
+                    raise HTTPException(404, "Email não encontrado")
+                elif "INVALID_EMAIL" in error_message:
+                    raise HTTPException(400, "Email inválido")
+                elif "TOO_MANY_ATTEMPTS" in error_message:
+                    raise HTTPException(429, "Muitas tentativas. Tente novamente mais tarde")
+                else:
+                    raise HTTPException(500, f"Erro ao enviar email de redefinição: {error_message}")
+                
+        else: 
+           
+            try:
+                # Busca o usuário pelo email no Firebase Authentication
+                user = admin_auth.get_user_by_email(password_reset.email)
+                
+                # Atualiza a senha usando Firebase Admin SDK
+                admin_auth.update_user(
+                    user.uid,
+                    password=password_reset.new_password
+                )
+                
+                return {
+                    "message": "Senha redefinida com sucesso",
+                    "email": password_reset.email
+                }
+                
+            except admin_auth.UserNotFoundError:
+                raise HTTPException(404, "Usuário não encontrado")
+            except Exception as e:
+                error_message = str(e)
+                if "WEAK_PASSWORD" in error_message:
+                    raise HTTPException(400, "Senha muito fraca. Use pelo menos 6 caracteres")
+                else:
+                    raise HTTPException(500, f"Erro ao redefinir senha: {error_message}")
+    
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(500, f"Erro interno: {str(e)}")
 
 @app.post("/families/join")
 async def join_family(
@@ -234,7 +388,78 @@ async def get_family_members(family_id: str):
     
     return {"members": members}
 
-# --- NOVAS FUNCIONALIDADES ---
+@app.delete("/families/{family_id}/members/{user_id}")
+async def remove_family_member(
+    family_id: str,
+    user_id: str,
+    current_user_id: str = Depends(get_current_user)
+):
+    """
+    Remove um membro da família. 
+    O usuário pode remover a si mesmo de qualquer família, 
+    ou o dono da família pode remover outros membros.
+    """
+    try:
+        # Verifica se a família existe
+        family_ref = db.reference(f"families/{family_id}")
+        family_data = family_ref.get()
+        
+        if not family_data:
+            raise HTTPException(404, "Família não encontrada")
+        
+        # Verifica se o usuário a ser removido está na família
+        members = family_data.get("members", {})
+        if user_id not in members:
+            raise HTTPException(404, "Usuário não é membro desta família")
+        
+        # Verifica permissões:
+        # 1. O usuário pode remover a si mesmo
+        # 2. O dono da família pode remover outros membros
+        # 3. O usuário atual deve ser membro da família
+        user_families = db.reference(f"users/{current_user_id}/families").get() or {}
+        
+        if family_id not in user_families:
+            raise HTTPException(403, "Você não tem acesso a esta família")
+        
+        is_removing_self = current_user_id == user_id
+        is_family_owner = family_data.get("owner") == current_user_id
+        
+        if not (is_removing_self or is_family_owner):
+            raise HTTPException(403, "Apenas o dono da família pode remover outros membros")
+        
+        # Verifica se não é o último membro
+        if len(members) == 1:
+            raise HTTPException(400, "Não é possível remover o último membro da família")
+        
+        # Se estiver removendo o dono, transfere a propriedade para outro membro
+        if user_id == family_data.get("owner"):
+            # Encontra outro membro para ser o novo dono
+            other_members = [member_id for member_id in members.keys() if member_id != user_id]
+            if other_members:
+                new_owner = other_members[0]
+                family_ref.update({"owner": new_owner})
+        
+        # Remove o usuário da família
+        db.reference(f"families/{family_id}/members/{user_id}").delete()
+        
+        # Remove a família da lista de famílias do usuário
+        db.reference(f"users/{user_id}/families/{family_id}").delete()
+        
+        # Obtém dados do usuário removido para resposta
+        removed_user_data = get_user_data(user_id)
+        
+        action_message = "Você saiu da família" if is_removing_self else "Membro removido da família"
+        
+        return {
+            "message": f"{action_message} com sucesso",
+            "removed_user": removed_user_data,
+            "family_id": family_id
+        }
+    
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao remover membro da família: {str(e)}")
 
 # 2 - LISTA DE COMPRAS
 
@@ -616,42 +841,51 @@ async def delete_shopping_list_item(
     
     except Exception as e:
         raise HTTPException(500, f"Erro ao remover item: {str(e)}")
+    
 
-@app.get("/items/suggestions")
+@app.get("/products/suggestions", response_model=Union[List[dict], dict])
 async def get_item_suggestions(
-    q: str = Query(..., min_length=1),
-    family_id: Optional[str] = None,
-    current_user_id: str = Depends(get_current_user)
+    q: str = Query(..., min_length=1, description="Texto de busca"),
+    limit: Optional[int] = Query(10, ge=1, le=50, description="Limite de resultados"),
+    offset: Optional[int] = Query(0, ge=0, description="Número de itens a pular"),
 ):
     """
     Retorna sugestões de itens com base no texto de busca.
-    Usa o histórico de itens da família ou do usuário para sugerir produtos semelhantes.
+    Usa os produtos cadastrados no Firebase para sugerir itens relevantes.
     """
     try:
-        suggestions = []
-        user_families = db.reference(f"users/{current_user_id}/families").get() or {}
-        
-        # Se não especificou família, procura em todas as famílias do usuário
-        families_to_search = [family_id] if family_id else user_families.keys()
-        
-        for fid in families_to_search:
-            if fid not in user_families:
-                continue  # Pula se o usuário não pertencer à família
-            
-            # Busca todas as listas da família
-            lists_ref = db.reference(f"shopping_lists/{fid}")
-            all_lists = lists_ref.get() or {}
-            
-            # Percorre todas as listas
-            for list_data in all_lists.values():
-                for item in list_data.get("itens", []):
-                    if q.lower() in item.get("nome", "").lower() and item.get("nome") not in suggestions:
-                        suggestions.append(item.get("nome"))
-        
-        return {"suggestions": suggestions[:10]}  # Limita a 10 sugestões
-    
+        ref = db.reference("products_list")
+        all_products = ref.get()
+
+        if not all_products:
+            return {"message": "Nenhum produto encontrado na base!"}
+
+        query_lower = q.lower()
+        resultados = []
+
+        # for item_id, produto in all_products.items():
+        #     descricao = produto.get("DESCRICAO", "").lower()
+        #     if query_lower in descricao:
+        #         resultados.append(produto)
+
+        for produto in all_products.values():
+            campos_para_buscar = [
+                produto.get("DESCRICAO", ""),
+                # produto.get("SUPERMERCADO", ""),
+                # produto.get("TIPO_PRODUTO", ""),
+                # produto.get("DEPARTAMENTO", "")
+            ]
+            if any(query_lower in campo.lower() for campo in campos_para_buscar):
+                resultados.append(produto)
+
+        if not resultados:
+            return {"message": f"Nenhum produto encontrado com parâmetro '{q}' "}
+
+        # Aplica offset e limit
+        return resultados[offset:offset + limit] 
+
     except Exception as e:
-        raise HTTPException(500, f"Erro ao buscar sugestões: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar sugestões: {str(e)}")
 
 # 4 - HISTÓRICO
 
